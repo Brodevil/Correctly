@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Form Assistant</title>
+  <style>
+    body {
+      width: 350px;
+      padding: 20px;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      margin: 0;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+    }
+    
+    .container {
+      background: rgba(255, 255, 255, 0.1);
+      backdrop-filter: blur(10px);
+      border-radius: 15px;
+      padding: 20px;
+      box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+    }
+    
+    h1 {
+      margin: 0 0 10px 0;
+      font-size: 20px;
+      text-align: center;
+    }
+    
+    .subtitle {
+      text-align: center;
+      font-size: 12px;
+      opacity: 0.8;
+      margin-bottom: 20px;
+    }
+    
+    .api-status {
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 10px;
+      padding: 15px;
+      margin-bottom: 15px;
+    }
+    
+    .api-key-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+    
+    .status-indicator {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-left: 8px;
+    }
+    
+    .status-ok {
+      background: #4ade80;
+      box-shadow: 0 0 8px #4ade80;
+    }
+    
+    .status-missing {
+      background: #f87171;
+      box-shadow: 0 0 8px #f87171;
+    }
+    
+    .input-group {
+      margin-bottom: 12px;
+    }
+    
+    .input-group label {
+      display: block;
+      font-size: 12px;
+      margin-bottom: 5px;
+      opacity: 0.9;
+    }
+    
+    .input-group input {
+      width: 100%;
+      padding: 8px;
+      border: none;
+      border-radius: 6px;
+      font-size: 12px;
+      box-sizing: border-box;
+      background: rgba(255, 255, 255, 0.9);
+      color: #333;
+    }
+    
+    button {
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      margin-bottom: 10px;
+    }
+    
+    #startBtn {
+      background: linear-gradient(135deg, #4ade80 0%, #22c55e 100%);
+      color: white;
+    }
+    
+    #startBtn:hover:not(:disabled) {
+      transform: translateY(-2px);
+      box-shadow: 0 5px 15px rgba(74, 222, 128, 0.4);
+    }
+    
+    #startBtn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    
+    #saveKeysBtn {
+      background: rgba(255, 255, 255, 0.2);
+      color: white;
+      font-size: 12px;
+      padding: 8px;
+    }
+    
+    #saveKeysBtn:hover {
+      background: rgba(255, 255, 255, 0.3);
+    }
+    
+    .status-message {
+      text-align: center;
+      margin-top: 15px;
+      font-size: 13px;
+      padding: 10px;
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.15);
+      display: none;
+    }
+    
+    .progress {
+      margin-top: 15px;
+      display: none;
+    }
+    
+    .progress-bar {
+      height: 6px;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-bottom: 8px;
+    }
+    
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #4ade80, #22c55e);
+      width: 0%;
+      transition: width 0.3s ease;
+    }
+    
+    .progress-text {
+      font-size: 12px;
+      text-align: center;
+    }
+    
+    .stats {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    
+    .stat-box {
+      background: rgba(255, 255, 255, 0.15);
+      padding: 8px;
+      border-radius: 6px;
+      text-align: center;
+    }
+    
+    .stat-number {
+      font-size: 18px;
+      font-weight: bold;
+      display: block;
+    }
+    
+    .stat-label {
+      font-size: 10px;
+      opacity: 0.8;
+      display: block;
+      margin-top: 2px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🤖 Smart Form Assistant</h1>
+    <p class="subtitle">AI-powered MCQ answering</p>
+    
+    <div class="api-status">
+      <div class="api-key-item">
+        <span>OpenAI API</span>
+        <span class="status-indicator status-missing" id="openai-status"></span>
+      </div>
+      <div class="api-key-item">
+        <span>Gemini API</span>
+        <span class="status-indicator status-missing" id="gemini-status"></span>
+      </div>
+    </div>
+    
+    <div id="api-config">
+      <div class="input-group">
+        <label>OpenAI API Key</label>
+        <input type="password" id="openaiKey" placeholder="sk-...">
+      </div>
+      <div class="input-group">
+        <label>Gemini API Key</label>
+        <input type="password" id="geminiKey" placeholder="AIza...">
+      </div>
+      <button id="saveKeysBtn">💾 Save API Keys</button>
+    </div>
+    
+    <button id="startBtn" disabled>▶ Start Auto-Answer</button>
+    
+    <div class="status-message" id="statusMessage"></div>
+    
+    <div class="progress" id="progressSection">
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <div class="progress-text" id="progressText">Processing questions...</div>
+      
+      <div class="stats">
+        <div class="stat-box">
+          <span class="stat-number" id="agreedCount">0</span>
+          <span class="stat-label">✅ Agreed</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-number" id="skippedCount">0</span>
+          <span class="stat-label">⚠️ Skipped</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-number" id="totalCount">0</span>
+          <span class="stat-label">📝 Total</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <script src="popup.js"></script>
+</body>
+</html>
