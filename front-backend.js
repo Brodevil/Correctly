@@ -659,24 +659,48 @@ async function scrapeGoogleForm(provider = "gemini") {
         const geminiNormalized = normalizeForComparison(geminiMatchedAnswer);
         answersMatch = gptNormalized.toLowerCase().trim() === geminiNormalized.toLowerCase().trim();
         
-        if (answersMatch && gptMatchedAnswer) {
+        if (answersMatch && gptMatchedAnswer && geminiMatchedAnswer) {
           // Both agree - use the answer (prefer Gemini for consistency)
           finalAnswer = geminiMatchedAnswer;
           console.log(`[Content] Question ${i + 1} - Both LLMs agree:`, finalAnswer);
         } else {
-          // Different answers - mark both options (will be handled in form filling)
-          finalAnswer = geminiMatchedAnswer || gptMatchedAnswer; // Use Gemini as default for display
-          console.log(`[Content] Question ${i + 1} - LLMs disagree - GPT:`, gptMatchedAnswer, "Gemini:", geminiMatchedAnswer, "- Marking both");
+          // Different answers - skip this question
+          console.log(`[Content] Question ${i + 1} - LLMs disagree - GPT:`, gptMatchedAnswer, "Gemini:", geminiMatchedAnswer, "- Skipping question");
+          // Small delay before next question
+          await new Promise(resolve => setTimeout(resolve, 500));
+          continue; // Skip to next question
         }
       } else {
-        // Non-MCQ question - use Gemini's answer
-        finalAnswer = geminiAnswer || gptAnswer;
-        console.log(`[Content] Question ${i + 1} - Non-MCQ, using Gemini answer:`, finalAnswer);
+        // Non-MCQ question - compare both answers
+        const normalizeText = (ans) => {
+          if (!ans) return "";
+          return String(ans).toLowerCase().trim();
+        };
+        
+        const gptNormalized = normalizeText(gptAnswer);
+        const geminiNormalized = normalizeText(geminiAnswer);
+        answersMatch = gptNormalized === geminiNormalized && gptNormalized !== "";
+        
+        if (answersMatch && gptAnswer && geminiAnswer) {
+          // Both agree - use Gemini's answer
+          finalAnswer = geminiAnswer;
+          console.log(`[Content] Question ${i + 1} - Both LLMs agree (non-MCQ):`, finalAnswer);
+        } else {
+          // Different answers - skip this question
+          console.log(`[Content] Question ${i + 1} - LLMs disagree (non-MCQ) - GPT:`, gptAnswer, "Gemini:", geminiAnswer, "- Skipping question");
+          // Small delay before next question
+          await new Promise(resolve => setTimeout(resolve, 500));
+          continue; // Skip to next question
+        }
       }
 
-      // Fill in the form
+      // Fill in the form (only if answers match)
       const response = finalAnswer;
       console.log(`[Content] Filling form for question ${i + 1}, type: ${questionData.type}`);
+      
+      // Store scroll position to prevent scrolling
+      const scrollX = window.scrollX || window.pageXOffset;
+      const scrollY = window.scrollY || window.pageYOffset;
 
         // Handle single-choice and multiple-choice questions
         if (
@@ -696,40 +720,25 @@ async function scrapeGoogleForm(provider = "gemini") {
           };
           
           const responseTexts = getResponseTexts(response);
-          const gptResponseTexts = getResponseTexts(gptMatchedAnswer);
-          const geminiResponseTexts = getResponseTexts(geminiMatchedAnswer);
           
           const questionLabels = questions[i].querySelectorAll("label");
 
           questionLabels.forEach((label, idx) => {
             const optionText = optionTexts[idx];
             const checked = label.querySelector("div[aria-checked=true]");
-            const isGptAnswer = gptResponseTexts.includes(optionText);
-            const isGeminiAnswer = geminiResponseTexts.includes(optionText);
             
-            if (answersMatch && response) {
-              // Both agree - mark the option normally
-              if (responseTexts.includes(optionText)) {
-                if (checked === null) {
-                  label.click();
-                }
-              } else {
-                if (checked !== null && !responseTexts.includes(optionText)) {
-                  label.click();
-                }
+            // Mark the option if it matches the response
+            if (responseTexts.includes(optionText)) {
+              if (checked === null) {
+                label.click();
+                // Restore scroll position immediately after click
+                window.scrollTo(scrollX, scrollY);
               }
             } else {
-              // Different answers - mark both options (GPT's and Gemini's)
-              if (isGptAnswer || isGeminiAnswer) {
-                // Mark the option if either LLM selected it
-                if (checked === null) {
-                  label.click();
-                }
-              } else {
-                // Not selected by either - uncheck if needed
-                if (checked !== null) {
-                  label.click();
-                }
+              if (checked !== null && !responseTexts.includes(optionText)) {
+                label.click();
+                // Restore scroll position immediately after click
+                window.scrollTo(scrollX, scrollY);
               }
             }
           });
@@ -748,6 +757,8 @@ async function scrapeGoogleForm(provider = "gemini") {
                 options.forEach((option) => {
                   if (option.textContent.trim() === response) {
                     option.click(); // Click the correct option
+                    // Restore scroll position immediately after click
+                    window.scrollTo(scrollX, scrollY);
                   }
                 });
               }
@@ -755,6 +766,8 @@ async function scrapeGoogleForm(provider = "gemini") {
 
             setTimeout(() => {
               dropdown.click(); // Open the dropdown
+              // Restore scroll position after opening dropdown
+              window.scrollTo(scrollX, scrollY);
               // Observe changes to the dropdown's DOM
               observer.observe(qs, { childList: true, subtree: true });
             }, 500 * drop_down_cntr);
@@ -771,6 +784,8 @@ async function scrapeGoogleForm(provider = "gemini") {
             inputElement.value = responseText;
             inputElement.dispatchEvent(new Event("input", { bubbles: true }));
             inputElement.blur();
+            // Restore scroll position after filling
+            window.scrollTo(scrollX, scrollY);
           }
         }
         // Handle long answer questions
@@ -782,51 +797,10 @@ async function scrapeGoogleForm(provider = "gemini") {
             textareaElement.value = responseText;
             textareaElement.dispatchEvent(new Event("input", { bubbles: true }));
             textareaElement.blur();
+            // Restore scroll position after filling
+            window.scrollTo(scrollX, scrollY);
           }
         }
-
-      // Show answer on form if enabled
-        const existingAnswer = questions[i].querySelector(
-          ".AI-Form-Solver-Answer"
-        );
-        if (existingAnswer) {
-          existingAnswer.remove();
-        }
-        const question = document.querySelectorAll(".M4DNQ")[i];
-      if (question) {
-        const answerElement = document.createElement("div");
-        // Format response for display (handle both string and object formats)
-        const formatAnswer = (ans) => {
-          if (!ans) return "";
-          if (Array.isArray(ans)) {
-            return ans.map(r => typeof r === 'string' ? r : (r.text || r)).join(", ");
-          } else if (typeof ans === 'object' && ans.text) {
-            return ans.text;
-          }
-          return String(ans);
-        };
-        
-        let displayResponse = response ? formatAnswer(response) : "";
-        
-        // For MCQ questions, show answer (even if LLMs differ, show what was marked)
-        if (questionData.options && questionData.options.length > 0) {
-          // Show the answer that was marked
-          displayResponse = displayResponse;
-        }
-        
-        if (displayResponse) {
-          answerElement.innerHTML = displayResponse;
-          answerElement.style.fontWeight = "bold";
-          answerElement.style.color = "#333"; // Always use dark color, no green
-          answerElement.className = "AI-Form-Solver-Answer";
-          if (show_UI) {
-            answerElement.style.display = "block";
-          } else {
-            answerElement.style.display = "none";
-          }
-          question.appendChild(answerElement);
-        }
-      }
 
       // Small delay between questions to avoid rate limiting
       await new Promise(resolve => setTimeout(resolve, 500));
@@ -1091,19 +1065,39 @@ async function scrapeMSForm(provider = "gemini") {
         const geminiNormalized = normalizeForComparison(geminiMatchedAnswer);
         answersMatch = gptNormalized.toLowerCase().trim() === geminiNormalized.toLowerCase().trim();
         
-        if (answersMatch && gptMatchedAnswer) {
+        if (answersMatch && gptMatchedAnswer && geminiMatchedAnswer) {
           // Both agree - use the answer (prefer Gemini for consistency)
           finalAnswer = geminiMatchedAnswer;
           console.log(`[Content] MS Form Question ${i + 1} - Both LLMs agree:`, finalAnswer);
         } else {
-          // Different answers - mark both options (will be handled in form filling)
-          finalAnswer = geminiMatchedAnswer || gptMatchedAnswer; // Use Gemini as default for display
-          console.log(`[Content] MS Form Question ${i + 1} - LLMs disagree - GPT:`, gptMatchedAnswer, "Gemini:", geminiMatchedAnswer, "- Marking both");
+          // Different answers - skip this question
+          console.log(`[Content] MS Form Question ${i + 1} - LLMs disagree - GPT:`, gptMatchedAnswer, "Gemini:", geminiMatchedAnswer, "- Skipping question");
+          // Small delay before next question
+          await new Promise(resolve => setTimeout(resolve, 500));
+          continue; // Skip to next question
         }
       } else {
-        // Non-MCQ question - use Gemini's answer
-        finalAnswer = geminiAnswer || gptAnswer;
-        console.log(`[Content] MS Form Question ${i + 1} - Non-MCQ, using Gemini answer:`, finalAnswer);
+        // Non-MCQ question - compare both answers
+        const normalizeText = (ans) => {
+          if (!ans) return "";
+          return String(ans).toLowerCase().trim();
+        };
+        
+        const gptNormalized = normalizeText(gptAnswer);
+        const geminiNormalized = normalizeText(geminiAnswer);
+        answersMatch = gptNormalized === geminiNormalized && gptNormalized !== "";
+        
+        if (answersMatch && gptAnswer && geminiAnswer) {
+          // Both agree - use Gemini's answer
+          finalAnswer = geminiAnswer;
+          console.log(`[Content] MS Form Question ${i + 1} - Both LLMs agree (non-MCQ):`, finalAnswer);
+        } else {
+          // Different answers - skip this question
+          console.log(`[Content] MS Form Question ${i + 1} - LLMs disagree (non-MCQ) - GPT:`, gptAnswer, "Gemini:", geminiAnswer, "- Skipping question");
+          // Small delay before next question
+          await new Promise(resolve => setTimeout(resolve, 500));
+          continue; // Skip to next question
+        }
       }
 
       const response = finalAnswer;
@@ -1112,6 +1106,10 @@ async function scrapeMSForm(provider = "gemini") {
       const responseTexts = Array.isArray(response) 
         ? response.map(r => typeof r === 'string' ? r : (r.text || r))
         : [responseText];
+      
+      // Store scroll position to prevent scrolling
+      const scrollX = window.scrollX || window.pageXOffset;
+      const scrollY = window.scrollY || window.pageYOffset;
 
         // Handle single-choice questions
       if (questionData.type === "single_ans") {
@@ -1123,41 +1121,25 @@ async function scrapeMSForm(provider = "gemini") {
             new_op.push(option.parentElement);
           });
 
-          // Extract text from responses for comparison
-          const getResponseTexts = (matchedAnswer) => {
-            if (!matchedAnswer) return [];
-            return Array.isArray(matchedAnswer) 
-              ? matchedAnswer.map(r => typeof r === 'string' ? r : (r.text || r))
-              : [typeof matchedAnswer === 'string' ? matchedAnswer : (matchedAnswer.text || matchedAnswer)];
-          };
-          
-          const gptResponseTexts = getResponseTexts(gptMatchedAnswer);
-          const geminiResponseTexts = getResponseTexts(geminiMatchedAnswer);
           const optionTexts = questionData.options.map(opt => typeof opt === 'string' ? opt : opt.text);
 
           // iterate on each child
         for (let j = 0; j < new_op.length; j++) {
             const optionText = optionTexts[j];
-            const isGptAnswer = gptResponseTexts.some(rt => new_op[j].textContent.trim().includes(rt) || rt.includes(optionText));
-            const isGeminiAnswer = geminiResponseTexts.some(rt => new_op[j].textContent.trim().includes(rt) || rt.includes(optionText));
             
-            if (answersMatch && response) {
-              // Both agree - mark normally
-              if (new_op[j].textContent.trim().includes(responseText)) {
+            // Mark the option if it matches the response
+            if (new_op[j].textContent.trim().includes(responseText)) {
+              if (!new_op[j].querySelector("input").checked) {
                 new_op[j].click();
+                // Restore scroll position immediately after click
+                window.scrollTo(scrollX, scrollY);
               }
             } else {
-              // Different answers - mark both options (GPT's and Gemini's)
-              if (isGptAnswer || isGeminiAnswer) {
-                // Mark the option if either LLM selected it
-                if (!new_op[j].querySelector("input").checked) {
-                  new_op[j].click();
-                }
-              } else {
-                // Not selected by either - uncheck if needed
-                if (new_op[j].querySelector("input").checked) {
-                  new_op[j].click();
-                }
+              // Uncheck if needed
+              if (new_op[j].querySelector("input").checked) {
+                new_op[j].click();
+                // Restore scroll position immediately after click
+                window.scrollTo(scrollX, scrollY);
               }
             }
           }
@@ -1173,55 +1155,27 @@ async function scrapeMSForm(provider = "gemini") {
             new_op.push(option.parentElement);
           });
           
-          // Extract text from responses for comparison
-          const getResponseTexts = (matchedAnswer) => {
-            if (!matchedAnswer) return [];
-            return Array.isArray(matchedAnswer) 
-              ? matchedAnswer.map(r => typeof r === 'string' ? r : (r.text || r))
-              : [typeof matchedAnswer === 'string' ? matchedAnswer : (matchedAnswer.text || matchedAnswer)];
-          };
-          
-          const gptResponseTexts = getResponseTexts(gptMatchedAnswer);
-          const geminiResponseTexts = getResponseTexts(geminiMatchedAnswer);
           const optionTexts = questionData.options.map(opt => typeof opt === 'string' ? opt : opt.text);
           
-          if (answersMatch && response) {
-            // Both agree - mark normally
-            responseTexts.forEach((resp) => {
-              new_op.forEach((option) => {
-                let checked = option.querySelector("input").checked;
-                if (option.textContent.trim() === resp) {
-                  if (!checked) {
-                    option.click();
-                  }
-                } else {
-                  if (checked && !responseTexts.includes(option.textContent.trim())) {
-                    option.click();
-                  }
-                }
-              });
-            });
-          } else {
-            // Different answers - mark both options (GPT's and Gemini's)
-            new_op.forEach((option, idx) => {
-              const optionText = optionTexts[idx];
-              const isGptAnswer = gptResponseTexts.includes(optionText);
-              const isGeminiAnswer = geminiResponseTexts.includes(optionText);
+          // Mark options that match the response
+          responseTexts.forEach((resp) => {
+            new_op.forEach((option) => {
               let checked = option.querySelector("input").checked;
-              
-              if (isGptAnswer || isGeminiAnswer) {
-                // Mark the option if either LLM selected it
+              if (option.textContent.trim() === resp) {
                 if (!checked) {
                   option.click();
+                  // Restore scroll position immediately after click
+                  window.scrollTo(scrollX, scrollY);
                 }
               } else {
-                // Not selected by either - uncheck if needed
-                if (checked) {
+                if (checked && !responseTexts.includes(option.textContent.trim())) {
                   option.click();
+                  // Restore scroll position immediately after click
+                  window.scrollTo(scrollX, scrollY);
                 }
               }
             });
-          }
+          });
         }
 
         // Handle short-answer questions
@@ -1233,6 +1187,8 @@ async function scrapeMSForm(provider = "gemini") {
           input.value = responseText;
           input.dispatchEvent(new Event("input", { bubbles: true }));
           input.blur();
+          // Restore scroll position after filling
+          window.scrollTo(scrollX, scrollY);
         }
         }
 
@@ -1245,48 +1201,10 @@ async function scrapeMSForm(provider = "gemini") {
           textarea.value = responseText;
           textarea.dispatchEvent(new Event("input", { bubbles: true }));
           textarea.blur();
+          // Restore scroll position after filling
+          window.scrollTo(scrollX, scrollY);
         }
         }
-
-      // Show answer on form if enabled
-      const existingAnswer = questions[i].querySelector(
-          ".AI-Form-Solver-Answer"
-        );
-        if (existingAnswer) {
-          existingAnswer.remove();
-        }
-      const answerElement = document.createElement("div");
-      // Format response for display (handle both string and object formats)
-      const formatAnswer = (ans) => {
-        if (!ans) return "";
-        if (Array.isArray(ans)) {
-          return ans.map(r => typeof r === 'string' ? r : (r.text || r)).join(", ");
-        } else if (typeof ans === 'object' && ans.text) {
-          return ans.text;
-        }
-        return String(ans);
-      };
-      
-      let displayResponse = response ? formatAnswer(response) : "";
-      
-      // For MCQ questions, show answer (even if LLMs differ, show what was marked)
-      if (questionData.options && questionData.options.length > 0) {
-        // Show the answer that was marked
-        displayResponse = displayResponse;
-      }
-      
-      if (displayResponse) {
-        answerElement.innerHTML = displayResponse;
-        answerElement.style.fontWeight = "bold";
-        answerElement.style.color = "#333"; // Always use dark color, no green
-        answerElement.className = "AI-Form-Solver-Answer";
-        if (show_UI) {
-          answerElement.style.display = "block";
-        } else {
-          answerElement.style.display = "none";
-        }
-        questions[i].firstElementChild.appendChild(answerElement);
-      }
 
       // Small delay between questions to avoid rate limiting
       await new Promise(resolve => setTimeout(resolve, 500));
