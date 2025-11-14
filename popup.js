@@ -58,6 +58,35 @@ document.getElementById("saveApiKey").addEventListener("click", () => {
   }
 });
 
+// Delay management
+document.getElementById("saveDelay").addEventListener("click", () => {
+  console.log("[Popup] Save Delay button clicked");
+  const delayValue = parseFloat(document.getElementById("delayInput").value);
+  
+  if (!isNaN(delayValue) && delayValue >= 0 && delayValue <= 10) {
+    chrome.storage.local.set({ questionDelay: delayValue }, () => {
+      console.log(`[Popup] Delay saved: ${delayValue} seconds`);
+      notify(`Delay set to ${delayValue} seconds`);
+      document.getElementById("delayInput").value = "";
+      loadDelay();
+    });
+  } else {
+    console.log("[Popup] Invalid delay value");
+    notify("Please enter a valid delay (0-10 seconds)");
+  }
+});
+
+function loadDelay() {
+  chrome.storage.local.get(["questionDelay"], (data) => {
+    console.log("[Popup] Loading saved delay");
+    if (data.questionDelay !== undefined) {
+      document.getElementById("delayInput").placeholder = `Current: ${data.questionDelay}s (enter new to update)`;
+    } else {
+      document.getElementById("delayInput").placeholder = "0.5 (default)";
+    }
+  });
+}
+
 // Load saved provider and API key when popup opens
 chrome.storage.local.get(["selectedProvider", "geminiApiKey", "openaiApiKey"], (data) => {
   console.log("[Popup] Loading saved settings");
@@ -67,6 +96,7 @@ chrome.storage.local.get(["selectedProvider", "geminiApiKey", "openaiApiKey"], (
   } else {
     loadApiKey("gemini");
   }
+  loadDelay();
 });
 
 // JavaScript to handle the toggle switch

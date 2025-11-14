@@ -95,27 +95,58 @@ async function callGeminiAPI(apiKey, prompt, images = []) {
       }
     }
     
-    const response = await fetch(apiUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: parts,
-          },
-        ],
-      }),
-    });
+    // Add timeout (30 seconds)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    
+    let response;
+    try {
+      response = await fetch(apiUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              parts: parts,
+            },
+          ],
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+    } catch (error) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        console.warn(`[Content] Model ${modelConfig.name} timed out`);
+        return { success: false, error: "Request timeout", isTimeout: true };
+      }
+      throw error;
+    }
 
     console.log("[Content] API Response status:", response.status);
 
     if (!response.ok) {
-      const errorData = await response.json();
-      const errorMsg = errorData.error?.message || "API request failed";
+      let errorMsg = "API request failed";
+      let isRateLimit = false;
+      try {
+        const errorData = await response.json();
+        errorMsg = errorData.error?.message || errorMsg;
+        // Check for rate limit errors
+        if (response.status === 429 || errorMsg.toLowerCase().includes("quota") || 
+            errorMsg.toLowerCase().includes("rate limit") || errorMsg.toLowerCase().includes("resource exhausted")) {
+          isRateLimit = true;
+        }
+      } catch (e) {
+        // If JSON parsing fails, use status text
+        errorMsg = response.statusText || errorMsg;
+        if (response.status === 429) {
+          isRateLimit = true;
+        }
+      }
       console.warn(`[Content] Model ${modelConfig.name} failed:`, errorMsg);
-      return { success: false, error: errorMsg };
+      return { success: false, error: errorMsg, isRateLimit, isTimeout: false };
     }
 
     const data = await response.json();
@@ -162,8 +193,8 @@ async function callGeminiAPI(apiKey, prompt, images = []) {
   // If all models failed, clear cache
   cachedWorkingModel = null;
   availableModels = null; // Clear model cache to retry discovery next time
-  console.error("[Content] All models failed. Last error:", lastError);
-  throw new Error(`All Gemini models failed. Last error: ${lastError}`);
+  console.error("[Content] All Gemini models failed. Last error:", lastError);
+  return null; // Return null instead of throwing
 }
 
 // Cache for OpenAI working model
@@ -250,31 +281,62 @@ async function callOpenAIAPI(apiKey, prompt, images = []) {
       }
     }
     
-    const response = await fetch(apiUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: modelName,
-        messages: [
-          {
-            role: "user",
-            content: content,
-          },
-        ],
-        temperature: 0.7,
-      }),
-    });
+    // Add timeout (30 seconds)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
+    
+    let response;
+    try {
+      response = await fetch(apiUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
+            {
+              role: "user",
+              content: content,
+            },
+          ],
+          temperature: 0.7,
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+    } catch (error) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        console.warn(`[Content] OpenAI model ${modelName} timed out`);
+        return { success: false, error: "Request timeout", isTimeout: true };
+      }
+      throw error;
+    }
 
     console.log("[Content] OpenAI API Response status:", response.status);
 
     if (!response.ok) {
-      const errorData = await response.json();
-      const errorMsg = errorData.error?.message || "API request failed";
+      let errorMsg = "API request failed";
+      let isRateLimit = false;
+      try {
+        const errorData = await response.json();
+        errorMsg = errorData.error?.message || errorMsg;
+        // Check for rate limit errors
+        if (response.status === 429 || errorMsg.toLowerCase().includes("quota") || 
+            errorMsg.toLowerCase().includes("rate limit") || errorMsg.toLowerCase().includes("billing")) {
+          isRateLimit = true;
+        }
+      } catch (e) {
+        // If JSON parsing fails, use status text
+        errorMsg = response.statusText || errorMsg;
+        if (response.status === 429) {
+          isRateLimit = true;
+        }
+      }
       console.warn(`[Content] OpenAI model ${modelName} failed:`, errorMsg);
-      return { success: false, error: errorMsg };
+      return { success: false, error: errorMsg, isRateLimit, isTimeout: false };
     }
 
     const data = await response.json();
@@ -321,7 +383,7 @@ async function callOpenAIAPI(apiKey, prompt, images = []) {
   // If all models failed, clear cache
   cachedOpenAIModel = null;
   console.error("[Content] All OpenAI models failed. Last error:", lastError);
-  throw new Error(`All OpenAI models failed. Last error: ${lastError}`);
+  return null; // Return null instead of throwing
 }
 
 // Function to convert image URL to base64 (for CORS issues)
@@ -398,14 +460,15 @@ async function scrapeGoogleForm(provider = "gemini") {
     console.warn("[Content] Solve button not found!");
   }
 
-  // Get both API keys from storage (we need both ChatGPT and Gemini)
-  console.log("[Content] Getting both API keys from storage");
+  // Get both API keys and delay setting from storage
+  console.log("[Content] Getting both API keys and delay setting from storage");
   const storageData = await new Promise((resolve) => {
-    chrome.storage.local.get(["openaiApiKey", "geminiApiKey", "selectedProvider"], resolve);
+    chrome.storage.local.get(["openaiApiKey", "geminiApiKey", "selectedProvider", "questionDelay"], resolve);
   });
 
   const openaiApiKey = storageData.openaiApiKey;
   const geminiApiKey = storageData.geminiApiKey;
+  const questionDelay = (storageData.questionDelay !== undefined) ? storageData.questionDelay * 1000 : 500; // Convert to milliseconds, default 0.5s
 
   if (!openaiApiKey || !geminiApiKey) {
     console.error(`[Content] Missing API keys - OpenAI: ${!!openaiApiKey}, Gemini: ${!!geminiApiKey}`);
@@ -659,15 +722,28 @@ async function scrapeGoogleForm(provider = "gemini") {
         const geminiNormalized = normalizeForComparison(geminiMatchedAnswer);
         answersMatch = gptNormalized.toLowerCase().trim() === geminiNormalized.toLowerCase().trim();
         
-        if (answersMatch && gptMatchedAnswer && geminiMatchedAnswer) {
+        // Handle different scenarios
+        if (!gptMatchedAnswer && !geminiMatchedAnswer) {
+          // Both failed - skip this question
+          console.log(`[Content] Question ${i + 1} - Both APIs failed - Skipping question`);
+          await new Promise(resolve => setTimeout(resolve, questionDelay));
+          continue;
+        } else if (!gptMatchedAnswer) {
+          // Only Gemini responded - use it
+          finalAnswer = geminiMatchedAnswer;
+          console.log(`[Content] Question ${i + 1} - Only Gemini responded:`, finalAnswer);
+        } else if (!geminiMatchedAnswer) {
+          // Only GPT responded - use it
+          finalAnswer = gptMatchedAnswer;
+          console.log(`[Content] Question ${i + 1} - Only GPT responded:`, finalAnswer);
+        } else if (answersMatch) {
           // Both agree - use the answer (prefer Gemini for consistency)
           finalAnswer = geminiMatchedAnswer;
           console.log(`[Content] Question ${i + 1} - Both LLMs agree:`, finalAnswer);
         } else {
-          // Different answers - skip this question
+          // Both responded but differ - skip this question
           console.log(`[Content] Question ${i + 1} - LLMs disagree - GPT:`, gptMatchedAnswer, "Gemini:", geminiMatchedAnswer, "- Skipping question");
-          // Small delay before next question
-          await new Promise(resolve => setTimeout(resolve, 500));
+          await new Promise(resolve => setTimeout(resolve, questionDelay));
           continue; // Skip to next question
         }
       } else {
@@ -681,15 +757,28 @@ async function scrapeGoogleForm(provider = "gemini") {
         const geminiNormalized = normalizeText(geminiAnswer);
         answersMatch = gptNormalized === geminiNormalized && gptNormalized !== "";
         
-        if (answersMatch && gptAnswer && geminiAnswer) {
+        // Handle different scenarios
+        if (!gptAnswer && !geminiAnswer) {
+          // Both failed - skip this question
+          console.log(`[Content] Question ${i + 1} - Both APIs failed (non-MCQ) - Skipping question`);
+          await new Promise(resolve => setTimeout(resolve, questionDelay));
+          continue;
+        } else if (!gptAnswer) {
+          // Only Gemini responded - use it
+          finalAnswer = geminiAnswer;
+          console.log(`[Content] Question ${i + 1} - Only Gemini responded (non-MCQ):`, finalAnswer);
+        } else if (!geminiAnswer) {
+          // Only GPT responded - use it
+          finalAnswer = gptAnswer;
+          console.log(`[Content] Question ${i + 1} - Only GPT responded (non-MCQ):`, finalAnswer);
+        } else if (answersMatch) {
           // Both agree - use Gemini's answer
           finalAnswer = geminiAnswer;
           console.log(`[Content] Question ${i + 1} - Both LLMs agree (non-MCQ):`, finalAnswer);
         } else {
-          // Different answers - skip this question
+          // Both responded but differ - skip this question
           console.log(`[Content] Question ${i + 1} - LLMs disagree (non-MCQ) - GPT:`, gptAnswer, "Gemini:", geminiAnswer, "- Skipping question");
-          // Small delay before next question
-          await new Promise(resolve => setTimeout(resolve, 500));
+          await new Promise(resolve => setTimeout(resolve, questionDelay));
           continue; // Skip to next question
         }
       }
@@ -802,8 +891,8 @@ async function scrapeGoogleForm(provider = "gemini") {
           }
         }
 
-      // Small delay between questions to avoid rate limiting
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Delay between questions (configurable)
+      await new Promise(resolve => setTimeout(resolve, questionDelay));
     }
 
       // Enable AI Solve button
@@ -830,14 +919,15 @@ async function scrapeMSForm(provider = "gemini") {
     solveButton.textContent = "Solving...";
   }
 
-  // Get both API keys from storage (we need both ChatGPT and Gemini)
-  console.log("[Content] Getting both API keys from storage for MS Form");
+  // Get both API keys and delay setting from storage
+  console.log("[Content] Getting both API keys and delay setting from storage for MS Form");
   const storageData = await new Promise((resolve) => {
-    chrome.storage.local.get(["openaiApiKey", "geminiApiKey", "selectedProvider"], resolve);
+    chrome.storage.local.get(["openaiApiKey", "geminiApiKey", "selectedProvider", "questionDelay"], resolve);
   });
 
   const openaiApiKey = storageData.openaiApiKey;
   const geminiApiKey = storageData.geminiApiKey;
+  const questionDelay = (storageData.questionDelay !== undefined) ? storageData.questionDelay * 1000 : 500; // Convert to milliseconds, default 0.5s
 
   if (!openaiApiKey || !geminiApiKey) {
     console.error(`[Content] Missing API keys - OpenAI: ${!!openaiApiKey}, Gemini: ${!!geminiApiKey}`);
@@ -1065,15 +1155,28 @@ async function scrapeMSForm(provider = "gemini") {
         const geminiNormalized = normalizeForComparison(geminiMatchedAnswer);
         answersMatch = gptNormalized.toLowerCase().trim() === geminiNormalized.toLowerCase().trim();
         
-        if (answersMatch && gptMatchedAnswer && geminiMatchedAnswer) {
+        // Handle different scenarios
+        if (!gptMatchedAnswer && !geminiMatchedAnswer) {
+          // Both failed - skip this question
+          console.log(`[Content] MS Form Question ${i + 1} - Both APIs failed - Skipping question`);
+          await new Promise(resolve => setTimeout(resolve, questionDelay));
+          continue;
+        } else if (!gptMatchedAnswer) {
+          // Only Gemini responded - use it
+          finalAnswer = geminiMatchedAnswer;
+          console.log(`[Content] MS Form Question ${i + 1} - Only Gemini responded:`, finalAnswer);
+        } else if (!geminiMatchedAnswer) {
+          // Only GPT responded - use it
+          finalAnswer = gptMatchedAnswer;
+          console.log(`[Content] MS Form Question ${i + 1} - Only GPT responded:`, finalAnswer);
+        } else if (answersMatch) {
           // Both agree - use the answer (prefer Gemini for consistency)
           finalAnswer = geminiMatchedAnswer;
           console.log(`[Content] MS Form Question ${i + 1} - Both LLMs agree:`, finalAnswer);
         } else {
-          // Different answers - skip this question
+          // Both responded but differ - skip this question
           console.log(`[Content] MS Form Question ${i + 1} - LLMs disagree - GPT:`, gptMatchedAnswer, "Gemini:", geminiMatchedAnswer, "- Skipping question");
-          // Small delay before next question
-          await new Promise(resolve => setTimeout(resolve, 500));
+          await new Promise(resolve => setTimeout(resolve, questionDelay));
           continue; // Skip to next question
         }
       } else {
@@ -1087,15 +1190,28 @@ async function scrapeMSForm(provider = "gemini") {
         const geminiNormalized = normalizeText(geminiAnswer);
         answersMatch = gptNormalized === geminiNormalized && gptNormalized !== "";
         
-        if (answersMatch && gptAnswer && geminiAnswer) {
+        // Handle different scenarios
+        if (!gptAnswer && !geminiAnswer) {
+          // Both failed - skip this question
+          console.log(`[Content] MS Form Question ${i + 1} - Both APIs failed (non-MCQ) - Skipping question`);
+          await new Promise(resolve => setTimeout(resolve, questionDelay));
+          continue;
+        } else if (!gptAnswer) {
+          // Only Gemini responded - use it
+          finalAnswer = geminiAnswer;
+          console.log(`[Content] MS Form Question ${i + 1} - Only Gemini responded (non-MCQ):`, finalAnswer);
+        } else if (!geminiAnswer) {
+          // Only GPT responded - use it
+          finalAnswer = gptAnswer;
+          console.log(`[Content] MS Form Question ${i + 1} - Only GPT responded (non-MCQ):`, finalAnswer);
+        } else if (answersMatch) {
           // Both agree - use Gemini's answer
           finalAnswer = geminiAnswer;
           console.log(`[Content] MS Form Question ${i + 1} - Both LLMs agree (non-MCQ):`, finalAnswer);
         } else {
-          // Different answers - skip this question
+          // Both responded but differ - skip this question
           console.log(`[Content] MS Form Question ${i + 1} - LLMs disagree (non-MCQ) - GPT:`, gptAnswer, "Gemini:", geminiAnswer, "- Skipping question");
-          // Small delay before next question
-          await new Promise(resolve => setTimeout(resolve, 500));
+          await new Promise(resolve => setTimeout(resolve, questionDelay));
           continue; // Skip to next question
         }
       }
@@ -1206,8 +1322,8 @@ async function scrapeMSForm(provider = "gemini") {
         }
         }
 
-      // Small delay between questions to avoid rate limiting
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Delay between questions (configurable)
+      await new Promise(resolve => setTimeout(resolve, questionDelay));
     }
 
     // Enable AI Solve button
